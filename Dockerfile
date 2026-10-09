@@ -39,6 +39,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
  && rm -rf /var/lib/apt/lists/*
 
+# Agent tools (functions/function_calling/uv_related.py) shell out to `uv`
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
+
 # Copy the prebuilt virtualenv from the builder
 COPY --from=builder /opt/venv /opt/venv
 
@@ -53,7 +56,8 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     BACKEND_BIND=${BACKEND_BIND}
 
 # Drop privileges
-RUN useradd -m appuser && chown -R appuser:appuser /app
+# Pre-create output dirs so named volumes mounted there inherit appuser ownership
+RUN useradd -m appuser && mkdir -p WareHouse data logs && chown -R appuser:appuser /app
 USER appuser
 
 # EXPOSE is informational; compose controls published ports

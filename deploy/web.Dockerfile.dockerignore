@@ -1,0 +1,6 @@
+# Build context for the web image: only the frontend and deploy config
+*
+!frontend/
+!deploy/
+frontend/node_modules/
+frontend/dist/
