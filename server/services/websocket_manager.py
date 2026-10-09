@@ -183,6 +183,16 @@ class WebSocketManager:
             )
             return
 
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            # Called on the owner loop itself: blocking on the future would
+            # deadlock the loop, so schedule the send and return.
+            loop.create_task(self.send_message(session_id, message))
+            return
+
         future = asyncio.run_coroutine_threadsafe(
             self.send_message(session_id, message), loop
         )
