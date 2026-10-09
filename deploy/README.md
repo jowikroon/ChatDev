@@ -16,8 +16,16 @@ in named volumes and survive redeploys.
 
 ## Deploy with Hostinger Docker Manager
 
-Create a project named `chatdev` from the contents of `deploy/docker-compose.yml`
-with this environment:
+Hostinger Docker Manager pulls images but does not build them, so use
+`deploy/compose.hostinger.yml`: it runs public images only (uv/Python, Node,
+nginx) and fetches the code from Git on start. The first start takes several
+minutes (dependency install + frontend build); restarting the project pulls
+the latest commit of `CHATDEV_REF`. Hosts that can build images can use
+`deploy/docker-compose.yml` instead (same variables, `CHATDEV_GIT` instead of
+`CHATDEV_REPO`/`CHATDEV_REF`).
+
+Create a project named `chatdev` from the contents of
+`deploy/compose.hostinger.yml` with this environment:
 
 | Variable | Example | Notes |
 |---|---|---|
@@ -27,9 +35,8 @@ with this environment:
 | `CHATDEV_PASSWORD` | (strong random) | Login password, required |
 | `BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint |
 | `API_KEY` | | LLM API key used by the `${API_KEY}` placeholders in workflows |
-| `CHATDEV_GIT` | `https://github.com/jowikroon/ChatDev.git#main` | Git build context (repo#branch) |
-
-Redeploying the project rebuilds from the branch in `CHATDEV_GIT`.
+| `CHATDEV_REPO` | `https://github.com/jowikroon/ChatDev.git` | Git repository |
+| `CHATDEV_REF` | `main` | Branch or tag to run |
 
 ## Run locally with the same stack
 
