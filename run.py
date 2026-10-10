@@ -1,140 +1,123 @@
-# =========== Copyright 2023 @ CAMEL-AI.org. All Rights Reserved. ===========
-# Licensed under the Apache License, Version 2.0 (the “License”);
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an “AS IS” BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# =========== Copyright 2023 @ CAMEL-AI.org. All Rights Reserved. ===========
+"""CLI entry point for executing ChatDev_new workflows."""
 import argparse
-import logging
-import os
-import sys
+import json
+from pathlib import Path
+from typing import List, Union
 
-from camel.typing import ModelType
+from runtime.bootstrap.schema import ensure_schema_registry_populated
+from check.check import load_config
+from entity.graph_config import GraphConfig
+from entity.messages import Message
+from utils.attachments import AttachmentStore
+from utils.schema_exporter import build_schema_response, SchemaResolutionError
+from utils.task_input import TaskInputBuilder
+from workflow.graph_context import GraphContext
+from workflow.graph import GraphExecutor
 
-root = os.path.dirname(__file__)
-sys.path.append(root)
-
-from chatdev.chat_chain import ChatChain
-
-try:
-    from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
-    from openai.types.chat.chat_completion_message import FunctionCall
-
-    openai_new_api = True  # new openai api version
-except ImportError:
-    openai_new_api = False  # old openai api version
-    print(
-        "Warning: Your OpenAI version is outdated. \n "
-        "Please update as specified in requirement.txt. \n "
-        "The old API interface is deprecated and will no longer be supported.")
+OUTPUT_ROOT = Path("WareHouse")
 
 
-def get_config(company):
-    """
-    return configuration json files for ChatChain
-    user can customize only parts of configuration json files, other files will be left for default
-    Args:
-        company: customized configuration name under CompanyConfig/
+ensure_schema_registry_populated()
 
-    Returns:
-        path to three configuration jsons: [config_path, config_phase_path, config_role_path]
-    """
-    config_dir = os.path.join(root, "CompanyConfig", company)
-    default_config_dir = os.path.join(root, "CompanyConfig", "Default")
+def build_task_input_payload(
+    graph_context: GraphContext,
+    prompt: str,
+    attachment_paths: List[str]
+) -> Union[str, List[Message]]:
+    """Construct the initial task input, embedding attachments when available."""
+    if not attachment_paths:
+        return prompt
 
-    config_files = [
-        "ChatChainConfig.json",
-        "PhaseConfig.json",
-        "RoleConfig.json"
-    ]
+    code_workspace = graph_context.directory / "code_workspace"
+    attachments_dir = code_workspace / "attachments"
+    attachments_dir.mkdir(parents=True, exist_ok=True)
+    store = AttachmentStore(attachments_dir)
+    builder = TaskInputBuilder(store)
+    return builder.build_from_file_paths(prompt, attachment_paths)
 
-    config_paths = []
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Run ChatDev_new workflow")
+    parser.add_argument(
+        "--path",
+        type=Path,
+        default=Path("yaml_instance/net_loop_test_included.yaml"),
+        help="Path to the design_0.4.0 workflow file",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default="test_project",
+        help="Name of the project",
+    )
+    parser.add_argument(
+        "--fn-module",
+        dest="fn_module",
+        default=None,
+        help="Optional module providing edge helper functions referenced by the design",
+    )
+    parser.add_argument(
+        "--inspect-schema",
+        action="store_true",
+        help="Output configuration schema (optionally scoped by breadcrumbs) and exit",
+    )
+    parser.add_argument(
+        "--schema-breadcrumbs",
+        type=str,
+        default=None,
+        help="JSON array describing schema breadcrumbs (e.g. '[{\"node\":\"DesignConfig\",\"field\":\"graph\"}]')",
+    )
+    parser.add_argument(
+        "--attachment",
+        action="append",
+        default=[],
+        help="Path to a file to attach to the initial user message (repeatable)",
+    )
+    return parser.parse_args()
 
-    for config_file in config_files:
-        company_config_path = os.path.join(config_dir, config_file)
-        default_config_path = os.path.join(default_config_dir, config_file)
+def main() -> None:
+    args = parse_arguments()
 
-        if os.path.exists(company_config_path):
-            config_paths.append(company_config_path)
-        else:
-            config_paths.append(default_config_path)
+    if args.inspect_schema:
+        breadcrumbs = None
+        if args.schema_breadcrumbs:
+            try:
+                breadcrumbs = json.loads(args.schema_breadcrumbs)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"Invalid --schema-breadcrumbs JSON: {exc}")
+        try:
+            schema = build_schema_response(breadcrumbs)
+        except SchemaResolutionError as exc:
+            raise SystemExit(f"Failed to resolve schema: {exc}")
+        print(json.dumps(schema, indent=2, ensure_ascii=False))
+        return
 
-    return tuple(config_paths)
+    design = load_config(
+        args.path,
+        fn_module=args.fn_module,
+    )
+
+    task_prompt = input("Please enter the task prompt: ")
+
+    # Create GraphConfig and GraphContext
+    graph_config = GraphConfig.from_definition(
+        design.graph,
+        name=args.name,
+        output_root=OUTPUT_ROOT,
+        source_path=str(args.path),
+        vars=design.vars,
+    )
+    graph_context = GraphContext(config=graph_config)
+
+    task_input = build_task_input_payload(
+        graph_context,
+        task_prompt,
+        args.attachment or [],
+    )
+    
+    GraphExecutor.execute_graph(graph_context, task_input)
+
+    print(graph_context.final_message())
 
 
-parser = argparse.ArgumentParser(description='argparse')
-parser.add_argument('--config', type=str, default="Default",
-                    help="Name of config, which is used to load configuration under CompanyConfig/")
-parser.add_argument('--org', type=str, default="DefaultOrganization",
-                    help="Name of organization, your software will be generated in WareHouse/name_org_timestamp")
-parser.add_argument('--task', type=str, default="Develop a basic Gomoku game.",
-                    help="Prompt of software")
-parser.add_argument('--name', type=str, default="Gomoku",
-                    help="Name of software, your software will be generated in WareHouse/name_org_timestamp")
-parser.add_argument('--model', type=str, default="GPT_3_5_TURBO",
-                    help="GPT Model, choose from {'GPT_3_5_TURBO','GPT_4','GPT_4_32K', 'GPT_4_TURBO'}")
-parser.add_argument('--path', type=str, default="",
-                    help="Your file directory, ChatDev will build upon your software in the Incremental mode")
-args = parser.parse_args()
-
-# Start ChatDev
-
-# ----------------------------------------
-#          Init ChatChain
-# ----------------------------------------
-config_path, config_phase_path, config_role_path = get_config(args.config)
-args2type = {'GPT_3_5_TURBO': ModelType.GPT_3_5_TURBO,
-             'GPT_4': ModelType.GPT_4,
-             'GPT_4_32K': ModelType.GPT_4_32k,
-             'GPT_4_TURBO': ModelType.GPT_4_TURBO,
-             'GPT_4_TURBO_V': ModelType.GPT_4_TURBO_V
-             }
-if openai_new_api:
-    args2type['GPT_3_5_TURBO'] = ModelType.GPT_3_5_TURBO_NEW
-
-chat_chain = ChatChain(config_path=config_path,
-                       config_phase_path=config_phase_path,
-                       config_role_path=config_role_path,
-                       task_prompt=args.task,
-                       project_name=args.name,
-                       org_name=args.org,
-                       model_type=args2type[args.model],
-                       code_path=args.path)
-
-# ----------------------------------------
-#          Init Log
-# ----------------------------------------
-logging.basicConfig(filename=chat_chain.log_filepath, level=logging.INFO,
-                    format='[%(asctime)s %(levelname)s] %(message)s',
-                    datefmt='%Y-%d-%m %H:%M:%S', encoding="utf-8")
-
-# ----------------------------------------
-#          Pre Processing
-# ----------------------------------------
-
-chat_chain.pre_processing()
-
-# ----------------------------------------
-#          Personnel Recruitment
-# ----------------------------------------
-
-chat_chain.make_recruitment()
-
-# ----------------------------------------
-#          Chat Chain
-# ----------------------------------------
-
-chat_chain.execute_chain()
-
-# ----------------------------------------
-#          Post Processing
-# ----------------------------------------
-
-chat_chain.post_processing()
+if __name__ == "__main__":
+    main()

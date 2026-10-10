@@ -1,10 +1,30 @@
+# Python
+__pycache__/
 *.pyc
-.DS_Store
-.idea
-.vscode
 
-# env
-.env/
+# Virtual environments
 .venv/
-env/
 venv/
+env/
+
+# uv
+.uv-cache/
+
+# IDEs
+.idea/
+.vscode/
+frontend/.vscode/
+
+# OS
+.DS_Store
+
+# Environment
+.env
+
+# Project Specific
+logs/
+node_modules/
+data/
+temp/
+WareHouse/
+

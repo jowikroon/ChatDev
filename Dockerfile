@@ -1,24 +1,67 @@
-# Start with a Python 3.9 base image
-FROM python:3.9-slim
+# ---- Builder: install deps with compilers and uv ----
+FROM python:3.12-slim AS builder
+ARG DEBIAN_FRONTEND=noninteractive
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the current directory contents into the container at /app
-COPY . /app
+# System deps required to build Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    build-essential \
+    python3-dev \
+    libcairo2-dev \
+ && rm -rf /var/lib/apt/lists/*
 
-# Install necessary libraries for GUI support
-RUN apt-get update && apt-get install -y python3-tk x11-apps
+# Install uv just for dependency resolution/install
+RUN pip install --no-cache-dir uv
 
-# Install the project dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install the project virtualenv outside /app so bind-mounts don't hide it
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 
-# Set the environment variable for OpenAI API key
-# (you'll need to provide the actual key when running the container)
-ENV OPENAI_API_KEY=your_OpenAI_API_key
+# Copy dependency files first to maximize cache
+COPY pyproject.toml ./
+# reproducible builds:
+COPY uv.lock ./
 
-# Expose the port for visualizer/app.py
-EXPOSE 8000
+# Create the project virtualenv and install deps
+RUN uv sync --no-cache --frozen
 
-# Set an entry point that runs a shell for interactive mode
-ENTRYPOINT ["/bin/bash"]
+# ---- Runtime: minimal image with only runtime libs + app ----
+FROM python:3.12-slim AS runtime
+ARG DEBIAN_FRONTEND=noninteractive
+ARG BACKEND_BIND=0.0.0.0
+
+WORKDIR /app
+
+# Install only runtime system libraries (no compilers)
+# Keep libcairo if your deps need it; remove if unnecessary
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcairo2 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Agent tools (functions/function_calling/uv_related.py) shell out to `uv`
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
+
+# Copy the prebuilt virtualenv from the builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy the rest of the application code
+COPY . .
+
+# Use the venv Python by default and keep Python output unbuffered.
+# Bake default bind/port into the image; can be overridden at runtime.
+ENV PATH="/opt/venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    BACKEND_BIND=${BACKEND_BIND}
+
+# Drop privileges
+# Pre-create output dirs so named volumes mounted there inherit appuser ownership
+RUN useradd -m appuser && mkdir -p WareHouse data logs && chown -R appuser:appuser /app
+USER appuser
+
+# EXPOSE is informational; compose controls published ports
+EXPOSE 6400
+
+# Command to run the backend server, parameterized by env
+CMD ["sh", "-c", "python server_main.py --port 6400 --host ${BACKEND_BIND:-0.0.0.0}"]

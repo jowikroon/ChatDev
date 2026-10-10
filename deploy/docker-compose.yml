@@ -1,0 +1,48 @@
+# Production stack for a VPS running Traefik (Hostinger "Docker + Traefik").
+# Builds straight from the Git repo, so it can be deployed by pasting this
+# file (or its raw URL) into Hostinger Docker Manager. Settings come from the
+# project environment, see deploy/README.md.
+name: chatdev
+
+services:
+  backend:
+    build:
+      context: ${CHATDEV_GIT:-https://github.com/jowikroon/ChatDev.git#main}
+      dockerfile: Dockerfile
+      target: runtime
+    environment:
+      BASE_URL: ${BASE_URL:-https://api.openai.com/v1}
+      API_KEY: ${API_KEY:-}
+      SERPER_DEV_API_KEY: ${SERPER_DEV_API_KEY:-}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      CORS_ALLOW_ORIGINS: https://${CHATDEV_HOST:-chatdev.localhost}
+    volumes:
+      - warehouse:/app/WareHouse
+      - data:/app/data
+      - logs:/app/logs
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ${CHATDEV_GIT:-https://github.com/jowikroon/ChatDev.git#main}
+      dockerfile: deploy/web.Dockerfile
+    environment:
+      CHATDEV_USER: ${CHATDEV_USER:-admin}
+      CHATDEV_PASSWORD: ${CHATDEV_PASSWORD:?set CHATDEV_PASSWORD}
+    depends_on:
+      - backend
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.chatdev.rule=Host(`${CHATDEV_HOST:-chatdev.localhost}`)
+      - traefik.http.routers.chatdev.entrypoints=websecure
+      - traefik.http.routers.chatdev.tls.certresolver=letsencrypt
+      - traefik.http.routers.chatdev-alt.rule=Host(`${CHATDEV_ALT_HOST:-chatdev-alt.localhost}`)
+      - traefik.http.routers.chatdev-alt.entrypoints=websecure
+      - traefik.http.routers.chatdev-alt.tls.certresolver=letsencrypt
+      - traefik.http.services.chatdev.loadbalancer.server.port=80
+    restart: unless-stopped
+
+volumes:
+  warehouse:
+  data:
+  logs:
