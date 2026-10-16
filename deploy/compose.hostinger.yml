@@ -65,6 +65,7 @@ services:
         rm -rf /out/html
         cp -r dist /out/html
         cp ../deploy/nginx.conf /out/default.conf
+        cp ../deploy/nginx-locations.conf /out/chatdev-locations.conf
         cp ../deploy/40-basic-auth.sh /out/40-basic-auth.sh
     volumes:
       - webroot:/out
@@ -80,12 +81,18 @@ services:
       - -ec
       - |
         cp /out/default.conf /etc/nginx/conf.d/default.conf
+        cp /out/chatdev-locations.conf /etc/nginx/chatdev-locations.conf
         rm -rf /usr/share/nginx/html
         ln -s /out/html /usr/share/nginx/html
         sh /out/40-basic-auth.sh
         exec nginx -g 'daemon off;'
     volumes:
       - webroot:/out:ro
+    networks:
+      - default
+      # Shared with the Cloudflare tunnel container, which reaches web:8080
+      # (no basic auth; the portal-gate Worker authenticates in front of it).
+      - tunnel
     depends_on:
       web-build:
         condition: service_completed_successfully
@@ -101,6 +108,11 @@ services:
       - traefik.http.routers.chatdev-alt.tls.certresolver=letsencrypt
       - traefik.http.services.chatdev.loadbalancer.server.port=80
     restart: unless-stopped
+
+networks:
+  tunnel:
+    external: true
+    name: ${CHATDEV_TUNNEL_NETWORK:-lab-reverse_default}
 
 volumes:
   app:
