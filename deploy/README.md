@@ -37,6 +37,13 @@ Create a project named `chatdev` from the contents of
 | `API_KEY` | | LLM API key used by the `${API_KEY}` placeholders in workflows |
 | `CHATDEV_REPO` | `https://github.com/jowikroon/ChatDev.git` | Git repository |
 | `CHATDEV_REF` | `main` | Branch or tag to run |
+| `CHATDEV_TUNNEL_NETWORK` | `lab-reverse_default` | Existing docker network of the Cloudflare tunnel container |
+
+Through Traefik the console asks for the basic-auth login. The Cloudflare
+tunnel reaches `chatdev-web-1:8080` on `CHATDEV_TUNNEL_NETWORK` instead; that
+port has no basic auth because the portal-gate Worker (hans-crafted-stories,
+`workers/portal-gate`) authenticates in front of it. Traefik never routes to
+8080. The network must exist before the project starts.
 
 ## Run locally with the same stack
 
