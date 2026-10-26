@@ -55,6 +55,14 @@ class FakeChatDev(BaseHTTPRequestHandler):
             return self._json({"workflows": ["demo_simple.yaml", "ChatDev_v1.yaml"]})
         if self.path == "/api/workflows/ChatDev_v1.yaml/desc":
             return self._json({"description": "Software company"})
+        if self.path == "/api/sessions/cut/download":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            self.wfile.write(b"PK\x03\x04truncated")
+            self.close_connection = True
+            return
         if self.path == "/api/sessions/login/download":
             return self._json({"html": "<p>login</p>"})
         if self.path.startswith("/api/sessions/") and self.path.endswith("/download"):
@@ -78,7 +86,10 @@ class FakeChatDev(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        if body["yaml_file"] == "broken.yaml":
+        if body["yaml_file"] == "emoji.yaml":
+            events = [("completed", {"status": "completed", "final_message": "Built a game \U0001F3AE",
+                                     "token_usage": {}, "output_dir": "/x"})]
+        elif body["yaml_file"] == "broken.yaml":
             events = [("error", {"message": "Failed to run workflow: 429 insufficient_quota"})]
         else:
             events = [("started", {}), ("log", {"node_id": "CEO", "message": "planning"}),
@@ -146,6 +157,22 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("returned no zip", err)
             self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_download_rejects_truncated_zip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, err = self.call("download", "cut", "--out", tmp)
+            self.assertEqual(code, 1)
+            self.assertTrue("incomplete" in err or "failed" in err or "IncompleteRead" in err, err)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_unicode_output_survives_legacy_console(self):
+        # A cp1252 pipe (Windows default when an agent captures output) must not crash on emoji.
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", CHATDEV_URL=self.url, CHATDEV_CLIENT_ID="id-1",
+                   CHATDEV_CLIENT_SECRET="secret-1", CHATDEV_ENV_FILE=os.devnull)
+        r = subprocess.run([sys.executable, str(HERE.parent / "scripts" / "chatdev.py"), "run", "emoji.yaml", "x"],
+                           env=env, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Built a game \U0001F3AE".encode("utf-8"), r.stdout)
 
     def test_session_id_printed_even_when_run_fails(self):
         code, out, _ = self.call("run", "broken.yaml", "x")

@@ -26,6 +26,7 @@ def test_stream_sends_heartbeats_while_workflow_is_silent(monkeypatch):
         )
 
     body = resp.text
+    assert resp.headers["x-accel-buffering"] == "no"
     assert ": ping" in body
     assert body.index(": ping") < body.index("event: completed")
     assert body.rstrip().endswith("}")

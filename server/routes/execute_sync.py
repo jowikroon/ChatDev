@@ -259,4 +259,10 @@ async def run_workflow_sync(request: WorkflowRunRequest, http_request: Request):
                     idle = 0.0
                     yield ": ping\n\n"
 
-    return StreamingResponse(stream(), media_type=_SSE_CONTENT_TYPE)
+    # nginx buffers proxied responses by default, which would hold back the
+    # heartbeats; X-Accel-Buffering tells it to pass this stream through.
+    return StreamingResponse(
+        stream(),
+        media_type=_SSE_CONTENT_TYPE,
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

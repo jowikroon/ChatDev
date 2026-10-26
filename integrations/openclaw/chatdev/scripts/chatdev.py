@@ -26,6 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 DEFAULT_URL = "https://chatdev.hansvanleeuwen.com"
@@ -120,16 +121,22 @@ class Client:
     def download(self, session_id: str, out_dir: Path) -> Path:
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / f"chatdev_{session_id}.zip"
+        partial = target.with_suffix(".zip.part")
         with self._open("GET", f"/api/sessions/{session_id}/download", accept="application/zip", timeout=300) as resp:
             first = resp.read(1 << 16)
             # A zip starts with "PK"; anything else (e.g. a login page after a redirect) is not a result.
             if not first.startswith(b"PK"):
                 raise ChatDevError(f"Download of {session_id} returned no zip: {first[:120]!r}")
-            with open(target, "wb") as fh:
+            with open(partial, "wb") as fh:
                 chunk = first
                 while chunk:
                     fh.write(chunk)
                     chunk = resp.read(1 << 16)
+        # A dropped connection can end the body early without an error; only a complete zip counts.
+        if not zipfile.is_zipfile(partial):
+            partial.unlink()
+            raise ChatDevError(f"Download of {session_id} was incomplete; try `download {session_id}` again.")
+        os.replace(partial, target)
         return target
 
 
@@ -144,6 +151,10 @@ def parse_vars(items):
 
 
 def main(argv=None) -> int:
+    # Windows consoles and captured pipes may default to cp1252; model output can hold any character.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Use the ChatDev server from OpenClaw.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("health")
