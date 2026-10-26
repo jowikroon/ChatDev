@@ -30,6 +30,7 @@ from workflow.graph_context import GraphContext
 router = APIRouter()
 
 _SSE_CONTENT_TYPE = "text/event-stream"
+_SSE_HEARTBEAT_SECONDS = 15.0
 
 
 def _normalize_session_name(yaml_path: Path, session_name: Optional[str]) -> str:
@@ -242,12 +243,26 @@ async def run_workflow_sync(request: WorkflowRunRequest, http_request: Request):
     threading.Thread(target=worker, daemon=True).start()
 
     async def stream():
+        idle = 0.0
         while True:
             try:
                 event_type, data = event_queue.get(timeout=0.1)
+                idle = 0.0
                 yield _sse_event(event_type, data)
             except queue.Empty:
-                if done_event.is_set():
+                if done_event.is_set() and event_queue.empty():
                     break
+                idle += 0.1
+                # Proxies such as Cloudflare drop a response that stays silent
+                # for 100s; an SSE comment keeps long model calls connected.
+                if idle >= _SSE_HEARTBEAT_SECONDS:
+                    idle = 0.0
+                    yield ": ping\n\n"
 
-    return StreamingResponse(stream(), media_type=_SSE_CONTENT_TYPE)
+    # nginx buffers proxied responses by default, which would hold back the
+    # heartbeats; X-Accel-Buffering tells it to pass this stream through.
+    return StreamingResponse(
+        stream(),
+        media_type=_SSE_CONTENT_TYPE,
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
