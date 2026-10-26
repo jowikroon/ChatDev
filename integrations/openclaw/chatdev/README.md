@@ -2,6 +2,8 @@
 
 Lets the OpenClaw agent on the Shadow PC start ChatDev runs on the VPS and bring back the result.
 
+![How OpenClaw uses ChatDev](how-it-works.png)
+
 ## Install (once)
 1. Download this folder: https://download-directory.github.io/?url=https://github.com/jowikroon/ChatDev/tree/main/integrations/openclaw/chatdev
    (or `git clone https://github.com/jowikroon/ChatDev` and open `integrations\openclaw\chatdev`).
