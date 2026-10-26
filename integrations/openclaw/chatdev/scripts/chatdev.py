@@ -121,12 +121,15 @@ class Client:
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / f"chatdev_{session_id}.zip"
         with self._open("GET", f"/api/sessions/{session_id}/download", accept="application/zip", timeout=300) as resp:
+            first = resp.read(1 << 16)
+            # A zip starts with "PK"; anything else (e.g. a login page after a redirect) is not a result.
+            if not first.startswith(b"PK"):
+                raise ChatDevError(f"Download of {session_id} returned no zip: {first[:120]!r}")
             with open(target, "wb") as fh:
-                while True:
-                    chunk = resp.read(1 << 16)
-                    if not chunk:
-                        break
+                chunk = first
+                while chunk:
                     fh.write(chunk)
+                    chunk = resp.read(1 << 16)
         return target
 
 
@@ -169,6 +172,8 @@ def main(argv=None) -> int:
             print(client.json("GET", f"/api/workflows/{args.workflow}/desc").get("description", ""))
         elif args.cmd == "run":
             session_id = f"oc{time.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(2)}"
+            # Printed first, so a dropped stream can still be recovered with `download`.
+            print(f"session_id: {session_id}", flush=True)
             started = time.time()
 
             def on_log(entry):
@@ -178,7 +183,6 @@ def main(argv=None) -> int:
                     print(f"[{int(time.time() - started):>4}s] {node} {msg}".rstrip(), file=sys.stderr)
 
             result = client.run(args.workflow, args.task, parse_vars(args.var), session_id, on_log)
-            print(f"session_id: {session_id}")
             print(f"token_usage: {json.dumps(result.get('token_usage'))}")
             print("final_message:")
             print(result.get("final_message", ""))

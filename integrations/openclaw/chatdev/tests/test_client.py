@@ -55,6 +55,8 @@ class FakeChatDev(BaseHTTPRequestHandler):
             return self._json({"workflows": ["demo_simple.yaml", "ChatDev_v1.yaml"]})
         if self.path == "/api/workflows/ChatDev_v1.yaml/desc":
             return self._json({"description": "Software company"})
+        if self.path == "/api/sessions/login/download":
+            return self._json({"html": "<p>login</p>"})
         if self.path.startswith("/api/sessions/") and self.path.endswith("/download"):
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w") as zf:
@@ -138,6 +140,18 @@ class ClientTests(unittest.TestCase):
         code, _, err = self.call("health", settings={"CHATDEV_URL": "http://127.0.0.1:1"})
         self.assertIn("Cannot reach", err)
 
+    def test_download_rejects_non_zip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, err = self.call("download", "login", "--out", tmp)
+            self.assertEqual(code, 1)
+            self.assertIn("returned no zip", err)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_session_id_printed_even_when_run_fails(self):
+        code, out, _ = self.call("run", "broken.yaml", "x")
+        self.assertEqual(code, 1)
+        self.assertTrue(out.startswith("session_id: oc"))
+
     def test_settings_file_and_env_override(self):
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / "chatdev.env"
@@ -167,6 +181,11 @@ class ClientTests(unittest.TestCase):
             self.assertNotIn("{{", skill)
             self.assertIn(str(Path(home) / "AI" / "chatdev-client" / "scripts" / "chatdev.py"), skill)
             self.assertIn("CHATDEV_CLIENT_SECRET=secret-1", (Path(home) / ".openclaw" / "chatdev.env").read_text())
+            # Running the installed copy's own installer keeps the client in place.
+            installed = Path(home) / "AI" / "chatdev-client"
+            r = subprocess.run([sys.executable, str(installed / "install.py")], env=env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue((installed / "scripts" / "chatdev.py").is_file())
 
 
 if __name__ == "__main__":

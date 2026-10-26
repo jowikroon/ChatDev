@@ -93,8 +93,10 @@ def install_skill():
 
 def main():
     log('python', sys.version.split()[0])
-    shutil.rmtree(TARGET, ignore_errors=True)
-    shutil.copytree(SRC, TARGET, ignore=shutil.ignore_patterns('__pycache__', 'install-report.txt'))
+    if os.path.normcase(os.path.realpath(SRC)) != os.path.normcase(os.path.realpath(TARGET)):
+        shutil.rmtree(TARGET, ignore_errors=True)
+        shutil.copytree(SRC, TARGET, ignore=shutil.ignore_patterns('__pycache__', 'install-report.txt'))
+    # else: INSTALL.bat was started from the installed copy itself; keep it in place.
     os.makedirs(OUT, exist_ok=True)
     log('client', TARGET)
     has_creds = write_credentials()
